@@ -1,0 +1,103 @@
+# vim: set tabstop=2 expandtab softtabstop=2 shiftwidth=2 autoindent :
+
+version: '2'
+services:
+  fluentd:
+    build:
+      context: fluentd
+      args:
+        FLUENTD_PLUGINS: ${FLUENTD_PLUGINS}
+        FLUENTD_DIR: ${FLUENTD_DIR}
+    labels:
+      container_group: detaillog
+    depends_on:
+      helper:
+        condition: service_completed_successfully
+      elasticsearch:
+        condition: service_healthy
+    restart: unless-stopped
+    image: detaillog-fluentd
+    mem_limit: 256m
+    environment:
+      TZ: ${TZ}
+    volumes:
+      - ./fluentd/fluent.conf:/fluentd/etc/fluent.conf:ro
+      - logs:/fluentd/logs:rw
+    networks:
+      - detaillog
+
+  elasticsearch:
+    labels:
+      container_group: detaillog
+    restart: unless-stopped
+    image: elasticsearch:${ELASTICSEARCH_VERSION}
+    mem_limit: 768m
+    environment:
+      TZ: ${TZ}
+      ES_JAVA_OPTS: "-Xms256m -Xmx256m"
+      node.name: elasticsearch
+      discovery.type: single-node
+      xpack.security.enabled: "false"
+      ingest.geoip.downloader.enabled: "false"
+    volumes:
+      - es-data:/usr/share/elasticsearch/data:rw
+    networks:
+      - detaillog
+    healthcheck:
+      test: ["CMD-SHELL", "curl -s http://localhost:9200 >/dev/null || exit 1"]
+      interval: 60s
+      timeout: 5s
+      retries: 3
+
+  kibana:
+    labels:
+      container_group: detaillog
+    restart: unless-stopped
+    depends_on:
+      elasticsearch:
+        condition: service_healthy
+    image: kibana:${KIBANA_VERSION}
+    mem_limit: 1024m
+    ports:
+      - "${KIBANA_EXTERNAL_PORT}:5601"
+    environment:
+      TZ: ${TZ}
+      SERVER_NAME: kibana
+      SERVER_PUBLICBASEURL: ${KIBANA_SERVER_PUBLICBASEURL}
+      ELASTICSEARCH_HOSTS: http://elasticsearch:9200
+      I18N_LOCALE: ja-JP
+      XPACK_INFRA_ENABLED: "false"
+      XPACK_LOGSTASH_ENABLED: "false"
+      XPACK_CANVAS_ENABLED: "false"
+      XPACK_SPACES_ENABLED: "false"
+      XPACK_APM_ENABLED: "false"
+      XPACK_SECURITY_ENABLED: "false"
+      XPACK_UPTIME_ENABLED: "false"
+      XPACK_SECURITYSOLUTION_ENABLED: "false"
+      XPACK_ML_ENABLED: "false"
+      XPACK_FLEET_ENABLED: "false"
+    networks:
+      - detaillog
+
+  helper:
+    image: alpine:3.17
+    command: |
+      /bin/sh -c
+      "[ ! -f /logs/detail ] && touch /logs/detail;
+       chown 1000:1000 /logs/detail;
+       exit 0"
+    restart: "no"
+    volumes:
+      - logs:/logs:rw
+    networks:
+      - detaillog
+
+volumes:
+  logs:
+    driver: local
+  es-data:
+    driver: local
+
+networks:
+  detaillog:
+    driver: bridge
